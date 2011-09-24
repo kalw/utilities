@@ -1,0 +1,317 @@
+From c6c69063494c0f07728cb6b607899567e62ff331 Mon Sep 17 00:00:00 2001
+From: Eygene Ryabinkin <rea-fbsd@codelabs.ru>
+Date: Mon, 20 Apr 2009 23:03:43 +0400
+
+Sometimes one wants to run many sshd executables with different
+configuration files and/or keys.  Now this is possible with the
+system startup script /etc/rc.d/sshd.  My primary target for
+these extensions are multihomed hosts that should let different
+users to log in to different configurations, but they could be
+used differently, because there is no enforcement on how to use
+the new functionality.
+
+Signed-off-by: Eygene Ryabinkin <rea-fbsd@codelabs.ru>
+---
+ crypto/openssh/sshd.8    |   98 ++++++++++++++++++++++++++++++++++++
+ etc/rc.d/sshd            |  125 +++++++++++++++++++++++++++++++++++++++++-----
+ share/man/man5/rc.conf.5 |    9 +++
+ 3 files changed, 219 insertions(+), 13 deletions(-)
+
+diff --git a/crypto/openssh/sshd.8 b/crypto/openssh/sshd.8
+index 56570f7..058ee41 100644
+--- a/crypto/openssh/sshd.8
++++ b/crypto/openssh/sshd.8
+@@ -685,6 +685,104 @@ cvs.example.net,192.0.2.10 ssh-rsa AAAA1234.....=
+ |1|JfKTdBh7rNbXkVAQCRp4OQoPfmI=|USECr3SWf1JUPsms5AqfD5QfxkM= ssh-rsa
+ AAAA1234.....=
+ .Ed
++.Sh FREEBSD MULTIPROFILE EXTENSIONS
++FreeBSD rc.d script for OpenSSH daemon allows to spawn more than
++one daemon by the
++.Nm
++startup script.
++When
++.Xr rc.conf 5
++variable named
++.Pa sshd_profiles
++is defined, it is treated as the list of
++.Nm
++profiles and multiple daemons are spawned.
++.Pp
++As usual, when 2nd argument to the rc.d script is given, it is treated
++as the profile name and the specified command applies only to this
++profile.
++When only one argument is given, it is applied to every profile
++that is specified in
++.Pa sshd_profiles .
++.Pp
++For each profile name the following variables could be defined:
++.Pp
++.Bl -tag -width Ds -compact
++.It sshd_<profile>_program
++Full path to the
++.Nm
++executable for this profile.
++Default value is
++.Pa /usr/bin/sshd .
++.Pp
++.It sshd_<profile>_pidfile
++Defines the location of
++.Nm
++PID file.
++Default value is
++.Pa /var/run/sshd.<profile>.pid .
++.Pp
++.It sshd_<profile>_confdir
++Specifies the location of directory with
++.Nm
++configuration files and keys.
++Default value is
++.Pa /etc/ssh.<profile> .
++.Pp
++.It sshd_<profile>_configfile
++Location of
++.Nm
++configuration file.
++Default value is
++.Pa ${sshd_<profile>_confdir}/sshd_config .
++.Pp
++.It sshd_<profile>_host_rsa_key
++Location of RSA key for this instance of
++.Nm .
++Default value is
++.Pa ${sshd_<profile>_confdir}/ssh_host_rsa_key .
++.Pp
++.It sshd_<profile>_host_dsa_key
++Location of protocol version 2 DSA key for this instance of
++.Nm .
++Default value is
++.Pa ${sshd_<profile>_confdir}/ssh_host_dsa_key .
++.Pp
++.It sshd_<profile>_host_key
++Location of protocol version 1 host key for this instance of
++.Nm .
++Default value is
++.Pa ${sshd_<profile>_confdir}/ssh_host_key .
++.Pp
++.It sshd_<profile>_flags
++Defines the flags for
++.Nm .
++When this variable is defined the only meaningful
++.Xr rc.conf 5
++variable for this
++.Nm
++instance is
++.Pa sshd_<profile>_program .
++.El
++.Pp
++There is one special profile name,
++.Pa default .
++For this profile, the default values for all variables coincide with
++ones for the
++.Qq standard
++.Nm
++service.
++It could be useful when one wants to add another instance of
++.Nm ,
++leaving the
++.Qq standard
++instance intact: just specify
++.Qq default special
++in the
++.Pa sshd_profiles
++and define variables only for
++.Pa special
++profile.
+ .Sh FILES
+ .Bl -tag -width Ds -compact
+ .It ~/.hushlogin
+diff --git a/etc/rc.d/sshd b/etc/rc.d/sshd
+index fd95d5a..51601e7 100755
+--- a/etc/rc.d/sshd
++++ b/etc/rc.d/sshd
+@@ -14,7 +14,13 @@ rcvar=`set_rcvar`
+ command="/usr/sbin/${name}"
+ keygen_cmd="sshd_keygen"
+ start_precmd="sshd_precmd"
+-pidfile="/var/run/${name}.pid"
++_pidprefix="/var/run/${name}"
++pidfile="${_pidprefix}.pid"
++_confdir="/etc/ssh"
++confdir="${_confdir}"
++sshd_host_key="${confdir}"/ssh_host_key
++sshd_host_dsa_key="${confdir}"/ssh_host_dsa_key
++sshd_host_rsa_key="${confdir}"/ssh_host_rsa_key
+ extra_commands="keygen reload"
+ 
+ timeout=300
+@@ -52,42 +58,135 @@ sshd_keygen()
+ 		return 1
+ 	}
+ 
+-	if [ -f /etc/ssh/ssh_host_key ]; then
++	if [ -f "${sshd_host_key}" ]; then
+ 		echo "You already have an RSA host key" \
+-		    "in /etc/ssh/ssh_host_key"
++		    "in ${sshd_host_key}"
+ 		echo "Skipping protocol version 1 RSA Key Generation"
+ 	else
+ 		/usr/bin/ssh-keygen -t rsa1 -b 1024 \
+-		    -f /etc/ssh/ssh_host_key -N ''
++		    -f "${sshd_host_key}" -N ''
+ 	fi
+ 
+-	if [ -f /etc/ssh/ssh_host_dsa_key ]; then
++	if [ -f "${sshd_host_dsa_key}" ]; then
+ 		echo "You already have a DSA host key" \
+-		    "in /etc/ssh/ssh_host_dsa_key"
++		    "in ${sshd_host_dsa_key}"
+ 		echo "Skipping protocol version 2 DSA Key Generation"
+ 	else
+-		/usr/bin/ssh-keygen -t dsa -f /etc/ssh/ssh_host_dsa_key -N ''
++		/usr/bin/ssh-keygen -t dsa -f "${sshd_host_dsa_key}" -N ''
+ 	fi
+ 
+-	if [ -f /etc/ssh/ssh_host_rsa_key ]; then
++	if [ -f "${sshd_host_rsa_key}" ]; then
+ 		echo "You already have a RSA host key" \
+-		    "in /etc/ssh/ssh_host_rsa_key"
++		    "in ${sshd_host_rsa_key}"
+ 		echo "Skipping protocol version 2 RSA Key Generation"
+ 	else
+-		/usr/bin/ssh-keygen -t rsa -f /etc/ssh/ssh_host_rsa_key -N ''
++		/usr/bin/ssh-keygen -t rsa -f "${sshd_host_rsa_key}" -N ''
+ 	fi
+ 	)
+ }
+ 
+ sshd_precmd()
+ {
+-	if [ ! -f /etc/ssh/ssh_host_key -o \
+-	    ! -f /etc/ssh/ssh_host_dsa_key -o \
+-	    ! -f /etc/ssh/ssh_host_rsa_key ]; then
++	if [ ! -f "${sshd_host_key}" -o \
++	    ! -f "${sshd_host_dsa_key}" -o \
++	    ! -f "${sshd_host_rsa_key}" ]; then
+ 		user_reseed
+ 		run_rc_command keygen
+ 	fi
+ }
+ 
+ load_rc_config $name
++
++# Have some profile name in the command line?
++if [ -n "$2" ]; then
++	if [ -z "$2" ]; then
++		echo "Empty profile name.  Skipping it."
++		exit 1
++	fi
++	if [ "`echo "$2" | tr -dc [[:alnum:]_]`" != "$2" ]; then
++		echo "Profile names must contain only alphanumericals and underscores."
++		exit 1
++	fi
++	profile="$2"
++	if [ -n "${sshd_profiles}" ]; then
++
++		# Profile named 'default' has a special meaning:
++		# it is the default system profile.  It is more
++		# convinient to say
++		#   sshd_profiles="default other1 other2"
++		# and configure stuff only for additional
++		# profile(s) without defining
++		#   sshd_default_confdir=/etc/ssh
++		# and others.
++		if [ "$profile" = default ]; then
++			_profile_namesuffix=""
++		else
++			_profile_namesuffix=".${profile}"
++		fi
++
++		# Binary name
++		eval binary="\${sshd_${profile}_program}"
++		if [ -n "$binary" ]; then
++			sshd_program="$binary"
++		fi
++
++		# PID file
++		eval pidfile="\${sshd_${profile}_pidfile}"
++		: ${pidfile:=${_pidprefix}${_profile_namesuffix}.pid}
++
++		# Configuration directory
++		eval confdir="\${sshd_${profile}_confdir}"
++		: ${confdir:=${_confdir}${_profile_namesuffix}}
++		if ! [ -d "$confdir" ]; then
++			cat << EOF
++Configuration directory '$confdir' for profile '$profile' does not exist.
++EOF
++		fi
++
++		# Configuration file
++		eval configfile="\${sshd_${profile}_configfile}"
++		: ${configfile:=${confdir}/sshd_config}
++
++		# Keys location
++		eval sshd_host_rsa_key="\${sshd_${profile}_host_rsa_key}"
++		: ${sshd_host_rsa_key:=${confdir}/ssh_host_rsa_key}
++		eval sshd_host_dsa_key="\${sshd_${profile}_host_dsa_key}"
++		: ${sshd_host_dsa_key:=${confdir}/ssh_host_dsa_key}
++		eval sshd_host_key="\${sshd_${profile}_host_key}"
++		: ${sshd_host_key:=${confdir}/ssh_host_key}
++
++		# Generate flags if they aren't already defined
++		eval sshd_flags="\${sshd_${profile}_flags}"
++		if [ -z "$sshd_flags" ]; then
++			# Specify only non-standard configuration file name
++			if [ "${configfile}" != /etc/ssh/sshd_config ]; then
++				sshd_flags="${sshd_flags} -f ${configfile}"
++			fi
++			# Specify key location only if it is non-standard
++			if [ "${sshd_host_key}" != /etc/ssh/ssh_host_key ]; then
++				sshd_flags="${sshd_flags} -h ${sshd_host_key}"
++			fi
++			if [ "${sshd_host_dsa_key}" != /etc/ssh/ssh_host_dsa_key ]; then
++				sshd_flags="${sshd_flags} -h ${sshd_host_dsa_key}"
++			fi
++			# Specify only non-standard PID file location
++			if [ "${pidfile}" != /var/run/sshd.pid ]; then
++				sshd_flags="${sshd_flags} -o PidFile=${pidfile}"
++			fi
++		fi
++	else
++		cat << EOF
++Extra argument '$2' ignored.  It will be interpreted as the profile name
++only when rc.conf(5) variable 'sshd_profiles' will be defined.
++EOF
++	fi
++else
++	if [ -n "${sshd_profiles}" ]; then
++		for p in ${sshd_profiles}; do
++			/etc/rc.d/${name} "$1" "$p"
++		done
++		exit 0
++	fi
++fi
++
+ run_rc_command "$1"
+diff --git a/share/man/man5/rc.conf.5 b/share/man/man5/rc.conf.5
+index 84b686a..6d92d35 100644
+--- a/share/man/man5/rc.conf.5
++++ b/share/man/man5/rc.conf.5
+@@ -3221,6 +3221,15 @@ is set to
+ these are the flags to pass to the
+ .Xr sshd 8
+ daemon.
++.It Va sshd_profiles
++.Pq Vt str
++List of SSH daemon profiles, allows to run multiple sshd binaries
++using system startup script.
++See section
++.Sx FREEBSD MULTIPROFILE EXTENSIONS
++in
++.Xr sshd 8
++for additional information on using multiple profiles.
+ .It Va ftpd_program
+ .Pq Vt str
+ Path to the FTP server program
+-- 
+1.6.1.3
