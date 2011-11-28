@@ -1,9 +1,12 @@
 set autolist
-if ($?prompt) then        set promptchars = "%#"
+if ($?prompt) then
+        set promptchars = "%#"
         if ($?tcsh) then
                 set prompt = "[%m:%c3] %n%# "
         else
-                set prompt = "[%m:%c3] `id -nu`%# "        endifendif
+                set prompt = "[%m:%c3] `id -nu`%# "
+        endif
+endif
 set complete = enhance
 complete portupgrade 'n@*@D:/var/db/pkg/@'
 complete pkg_delete 'n@*@D:/var/db/pkg/@'
